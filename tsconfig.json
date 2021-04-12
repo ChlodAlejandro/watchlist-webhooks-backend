@@ -1,0 +1,15 @@
+{
+    "compilerOptions": {
+        "outDir": "./bin",
+        "allowJs": false,
+        "target": "es6",
+        "module": "CommonJS",
+        "esModuleInterop": true,
+        "traceResolution": true,
+        "inlineSources": true,
+        "sourceMap": true
+    },
+    "include": [
+        "./src/**/*"
+    ]
+}
