@@ -154,7 +154,7 @@ export default class WebRequestQueue {
             this.queue.push({ request: { url: a1, config: a2 }, promise: promiseElements});
 
         if (this.queue.length > 50) {
-            console.warn("The queue is heavily backlogged. Something must be wrong.");
+            WWBackend.log.warn("The queue is heavily backlogged. Something must be wrong.");
         }
 
         if (this.state === WebRequestQueueState.Inactive && !this.processing) {
