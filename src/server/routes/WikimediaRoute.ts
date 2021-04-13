@@ -1,16 +1,11 @@
 import express from "express";
-import axios from "axios";
 import Route from "./Route";
 import ResponseUtils from "../../util/ResponseUtils";
 import StringUtils from "../../util/StringUtils";
 import WWBackend from "../../WWBackend";
 import URLUtils from "../../util/URLUtils";
-import * as QueryString from "querystring";
-
-const apiTarget = "https://meta.wikimedia.org/w/rest.php";
-const oauthStartTarget = `${apiTarget}/oauth2/authorize`;
-const oauthEndTarget = `${apiTarget}/oauth2/access_token`;
-const oauthProfileTarget = `${apiTarget}/oauth2/resource/profile`;
+import WikimediaURL from "../../wikimedia/WikimediaURL";
+import AccessToken from "../../wikimedia/AccessToken";
 
 /**
  * Begins authorization with Wikimedia. This sets the proper anti-CSRF cookie
@@ -33,7 +28,7 @@ function startWikimediaAuthorization(req : express.Request, res : express.Respon
         else if (req.query["redirect"])
             res.cookie("wmww-postauth-redirect", req.query["redirect"]);
 
-        const target = new URL(oauthStartTarget);
+        const target = new URL(WikimediaURL.oauthAuthorize);
         const authId = StringUtils.random(64);
 
         target.searchParams.set("response_type", "code");
@@ -63,9 +58,20 @@ function startWikimediaAuthorization(req : express.Request, res : express.Respon
  * @param res The Express response.
  */
 async function endWikimediaAuthorization(req, res) : Promise<void> {
+    if (req.cookies["wmww-cookies"] == null) {
+        // No cookies? Let's send them back.
+        const target = new URL(URLUtils.fullURL(req));
+        target.pathname = "/cookies";
+        target.searchParams.set("confirm", "1");
+        target.searchParams.set("redirect", req.url);
+
+        return res.redirect(target.toString());
+    }
+    if (req.cookies["wmww-auth-id"] == null) {
+        return res.redirect("/wikimedia");
+    }
     if (
-        !req.cookies["wmww-auth-id"]
-        || req.cookies["wmww-auth-id"].length !== 64
+        req.cookies["wmww-auth-id"].length !== 64
         || /[^A-Za-z0-9]/.test(req.cookies["wmww-auth-id"])
     )
         return ResponseUtils.resJsonError(res, 400, "Bad confirmation id.");
@@ -78,35 +84,11 @@ async function endWikimediaAuthorization(req, res) : Promise<void> {
     }
 
     try {
-        let centralAuthId : string;
-        let tokenData : {
-            "token_type": string,
-            "expires_in": number,
-            "access_token": string,
-            "refresh_token": string
-        };
+        let token : AccessToken;
+
         try {
-            const tokenRequest = await axios.post(oauthEndTarget, QueryString.stringify({
-                "client_id": process.env["WMWW_WM_CONSUMER_KEY"],
-                "client_secret": process.env["WMWW_WM_CONSUMER_TOKEN"],
-                "redirect_uri": process.env["WMWW_WM_REDIRECT_URI"],
-                "grant_type": "authorization_code",
-                "code": req.query["code"]
-            }), {
-                responseType: "json"
-            });
-
-            tokenData = tokenRequest.data;
-
-            // Get user information
-            const infoRequest = await axios.get(oauthProfileTarget, {
-                headers: {
-                    "Authorization": `Bearer ${tokenData.access_token}`
-                },
-                responseType: "json"
-            });
-
-            centralAuthId = infoRequest.data["sub"];
+            // Grab the access token and CentralAuth ID
+            token = await AccessToken.fromAuthorizationCode(req.query["code"]);
         } catch (e) {
             WWBackend.log.error(`Failed to get authorization access token: ${e.message}`, e);
             if (e.isAxiosError) {
@@ -121,39 +103,30 @@ async function endWikimediaAuthorization(req, res) : Promise<void> {
         }
 
         // Save all data
-        await WWBackend.database.useConnection(async (sql) => {
-            await sql.query(`
-                INSERT INTO \`accounts\` (\`acc_id\`, \`acc_access\`, \`acc_refresh\`) VALUES
-                    (?, ?, ?) ON DUPLICATE KEY UPDATE \`acc_access\` = ?, \`acc_refresh\` = ?
-            `, [
-                centralAuthId,
-                tokenData.access_token,
-                tokenData.refresh_token,
-                tokenData.access_token,
-                tokenData.refresh_token
-            ]);
-
+        await token.save(async (sql) => {
             const expiry = new Date();
             expiry.setDate(expiry.getDate() + 30);
 
+            // Also save session cookies for control panel access.
             await sql.query(
                 "INSERT INTO `sessions` (`ses_id`, `ses_account`, `ses_expiry`) VALUES (?, ?, ?)",
                 [
                     req.cookies["wmww-auth-id"],
-                    centralAuthId,
+                    token.centralAuthID,
                     expiry.toISOString().replace(/[TZ]/g, " ").trim()
                 ]
             );
-
-            WWBackend.log.debug(`User logged in: ${centralAuthId}`);
         });
 
+        WWBackend.log.debug(`User logged in: ${token.centralAuthID}`);
+
+        // Redirect if we have to.
         if (req.cookies["wmww-postauth-redirect"]) {
             res.redirect(req.cookies["wmww-postauth-redirect"]);
         } else
             ResponseUtils.resJson(res, {
                 error: false,
-                userId: centralAuthId
+                userId: token.centralAuthID
             });
     } catch (e) {
         WWBackend.log.error("Failed to get authorization information.", e);

@@ -1,10 +1,13 @@
 import Logger from "bunyan";
+import axios from "axios";
 import BunyanFormat from "bunyan-format";
 import Database from "./database/Database";
 import EnvironmentUtils from "./util/EnvironmentUtils";
 import {TimeUtils} from "./util/TimeUtils";
 import StringUtils from "./util/StringUtils";
 import WWHTTPServer from "./server/WWHTTPServer";
+
+import packageLock from "../package-lock.json";
 
 /**
  * HTTP and WSS server for Watchlist Webhooks.
@@ -63,6 +66,17 @@ export default class WWBackend {
                 return;
             }
         }
+
+        this.log.info("Configuring libraries...");
+        axios.interceptors.request.use((config) => {
+            config.headers["User-Agent"] = `WatchlistWebhooks/${
+                packageLock.version
+            } (https://watchlist-webhooks.toolforge.org; wiki@chlod.net) axios/${
+                packageLock.dependencies["axios"].version
+            }`;
+
+            return config;
+        });
 
         try {
             this.database = new Database();
