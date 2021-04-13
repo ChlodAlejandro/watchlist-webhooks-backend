@@ -1,6 +1,6 @@
 import WWBackend from "../WWBackend";
 import {TimeUtils} from "../util/TimeUtils";
-import axios, {AxiosRequestConfig, AxiosResponse} from "axios";
+import axios, {AxiosRequestConfig} from "axios";
 import QueryString from "querystring";
 import WikimediaURL from "./WikimediaURL";
 import mysql from "mysql2/promise";
@@ -46,13 +46,16 @@ export default class AccessToken {
      */
     static async fromAuthorizationCode(authorizationCode : string) : Promise<AccessToken> {
         const tokenData : AccessTokenResponse =
-            (await axios.post(WikimediaURL.oauthAccessToken, QueryString.stringify({
-                "client_id": process.env["WMWW_WM_CONSUMER_KEY"],
-                "client_secret": process.env["WMWW_WM_CONSUMER_TOKEN"],
-                "redirect_uri": process.env["WMWW_WM_REDIRECT_URI"],
-                "grant_type": "authorization_code",
-                "code": authorizationCode
-            }), {
+            (await axios({
+                method: "post",
+                url: WikimediaURL.oauthAccessToken,
+                data: QueryString.stringify({
+                    "client_id": process.env["WMWW_WM_CONSUMER_KEY"],
+                    "client_secret": process.env["WMWW_WM_CONSUMER_TOKEN"],
+                    "redirect_uri": process.env["WMWW_WM_REDIRECT_URI"],
+                    "grant_type": "authorization_code",
+                    "code": authorizationCode
+                }),
                 responseType: "json"
             })).data;
 
@@ -87,9 +90,10 @@ export default class AccessToken {
      */
     private async getCentralAuthId() : Promise<void> {
         // Get user information
-        const infoRequest = await this.perform(WikimediaURL.oauthProfile, {
+        const infoRequest = await axios(await this.upgradeRequest({
+            url: WikimediaURL.oauthProfile,
             responseType: "json"
-        });
+        }));
 
         this._centralAuthID = infoRequest.data["sub"];
     }
@@ -98,13 +102,16 @@ export default class AccessToken {
      * Regenerates this access token using its refresh token.
      */
     async refresh() : Promise<void> {
-        const tokenRequest = await axios.post(WikimediaURL.oauthAccessToken, QueryString.stringify({
-            "client_id": process.env["WMWW_WM_CONSUMER_KEY"],
-            "client_secret": process.env["WMWW_WM_CONSUMER_TOKEN"],
-            "redirect_uri": process.env["WMWW_WM_REDIRECT_URI"],
-            "grant_type": "refresh_token",
-            "refresh_token": this._refreshToken
-        }), {
+        const tokenRequest = await axios({
+            method: "post",
+            url: WikimediaURL.oauthAccessToken,
+            data: QueryString.stringify({
+                "client_id": process.env["WMWW_WM_CONSUMER_KEY"],
+                "client_secret": process.env["WMWW_WM_CONSUMER_TOKEN"],
+                "redirect_uri": process.env["WMWW_WM_REDIRECT_URI"],
+                "grant_type": "refresh_token",
+                "refresh_token": this._refreshToken
+            }),
             responseType: "json"
         });
 
@@ -151,16 +158,20 @@ export default class AccessToken {
     }
 
     /**
-     * Performs a request with Axios with the proper headers.
-     * @param url The URL to request.
-     * @param config The axios configuration.
+     * Upgrades a request with the proper authentication headers.
+     *
+     * @param config The Axios request configuration.
      */
-    async perform(url : string, config? : AxiosRequestConfig) : Promise<AxiosResponse> {
-        return axios(url, Object.assign({
-            headers: Object.assign({
-                "Authorization": `Bearer ${this._accessToken}`
-            }, config.headers ?? {})
-        }));
+    async upgradeRequest(config? : AxiosRequestConfig) : Promise<AxiosRequestConfig> {
+        if (this._registry.getTime() - this._registry.getTime() > 60000)
+            await this.refresh();
+
+        if (config.headers == null)
+            config.headers = {};
+
+        config.headers["Authorization"] = `Bearer ${this._accessToken}`;
+
+        return config;
     }
 
 }

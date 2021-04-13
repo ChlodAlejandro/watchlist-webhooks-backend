@@ -8,6 +8,7 @@ import StringUtils from "./util/StringUtils";
 import WWHTTPServer from "./server/WWHTTPServer";
 
 import packageLock from "../package-lock.json";
+import WikimediaURL from "./wikimedia/WikimediaURL";
 
 /**
  * HTTP and WSS server for Watchlist Webhooks.
@@ -75,8 +76,16 @@ export default class WWBackend {
                 packageLock.dependencies["axios"].version
             }`;
 
+            if (config.url.includes("/w/api.php")) {
+                if (config.params != null) {
+                    config.params.format = "json";
+                    config.params.formatversion = "2";
+                }
+            }
+
             return config;
         });
+        await WikimediaURL.buildCache();
 
         try {
             this.database = new Database();

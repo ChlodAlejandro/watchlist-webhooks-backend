@@ -4,14 +4,6 @@ import PromiseUtils, {ExposedPromise} from "../util/PromiseUtils";
 import RateLimiter from "./RateLimiter";
 
 /**
- * Represents a web request to be performed by Axios.
- */
-export interface WebRequest {
-    config?: AxiosRequestConfig;
-    url?: string;
-}
-
-/**
  * The state of the web request queue.
  */
 export enum WebRequestQueueState {
@@ -50,7 +42,7 @@ export default class WebRequestQueue {
 
     // O(1) time complexity? What's that?
     /** This queue's request queue. */
-    private queue : {request: WebRequest, promise: ExposedPromise<AxiosResponse>}[];
+    private queue : {request: AxiosRequestConfig, promise: ExposedPromise<AxiosResponse>}[];
     /** The status of this web request queue. */
     private state : WebRequestQueueState;
     /** Whether or not a processor is already running. */
@@ -96,8 +88,7 @@ export default class WebRequestQueue {
 
                 try {
                     // This await is VERY important!
-                    const requestResponse = await (request.url == null ?
-                        axios(request.config) : axios(request.url, request.config));
+                    const requestResponse = await axios(request);
                     promise.resolver(requestResponse);
 
                     this.rateLimit.increment();
@@ -117,41 +108,17 @@ export default class WebRequestQueue {
 
     /**
      * Enqueues a web request.
-     * @param url The URL of the resource to be requested.
-     */
-    async enqueue(url : string) : Promise<AxiosResponse>;
-    /**
-     * Enqueues a web request.
      * @param config The configuration for this request.
-     */
-    async enqueue(config : AxiosRequestConfig) : Promise<AxiosResponse>;
-    /**
-     * Enqueues a web request.
-     * @param url The URL of the resource to be requested.
-     * @param config The configuration for this request.
-     */
-    async enqueue(url : string, config : AxiosRequestConfig) : Promise<AxiosResponse>
-    /**
-     * Enqueues a web request.
-     * @param a1 The URL or configuration of the request.
-     * @param a2 The configuration of the request, if the first argument was a URL.
      */
     async enqueue(
-        a1 : string | AxiosRequestConfig,
-        a2? : AxiosRequestConfig
+        config : AxiosRequestConfig
     ) : Promise<AxiosResponse> {
         const promiseElements = PromiseUtils.build<AxiosResponse>();
 
-        if (a2 == null && typeof a1 === "string")
-            this.queue.push({ request: { url: a1 }, promise: promiseElements});
-        else if (a2 == null && typeof a1 !== "string")
-            this.queue.push({ request: { config: a1 }, promise: promiseElements});
-        else if (typeof a2 === "string" && typeof a1 === "string")
-            this.queue.push({ request: { url: a1 }, promise: promiseElements});
-        else if (typeof a2 === "object" && typeof a1 === "object")
-            this.queue.push({ request: { config: a1 }, promise: promiseElements});
-        else if (typeof a2 === "object" && typeof a1 === "string")
-            this.queue.push({ request: { url: a1, config: a2 }, promise: promiseElements});
+        this.queue.push({
+            request: config,
+            promise: promiseElements
+        });
 
         if (this.queue.length > 50) {
             WWBackend.log.warn("The queue is heavily backlogged. Something must be wrong.");
