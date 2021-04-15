@@ -3,6 +3,9 @@ import WWBackend from "../WWBackend";
 import PromiseUtils, {ExposedPromise} from "../util/PromiseUtils";
 import RateLimiter from "./RateLimiter";
 
+/** Maximum amount of queues */
+const QUEUE_LIMIT = 3;
+
 /**
  * The state of the web request queue.
  */
@@ -11,6 +14,18 @@ export enum WebRequestQueueState {
     Paused,
     Active
 }
+
+/**
+ * A single queue which contains request and promise information.
+ */
+type Queue = {
+    processing: boolean,
+    state: WebRequestQueueState,
+    requests: {
+        request: AxiosRequestConfig,
+        promise: ExposedPromise<AxiosResponse>
+    }[];
+};
 
 /**
  * This is a worker class responsible for dealing with a sequence of
@@ -41,12 +56,20 @@ export default class WebRequestQueue {
     }
 
     // O(1) time complexity? What's that?
-    /** This queue's request queue. */
-    private queue : {request: AxiosRequestConfig, promise: ExposedPromise<AxiosResponse>}[];
-    /** The status of this web request queue. */
-    private state : WebRequestQueueState;
-    /** Whether or not a processor is already running. */
-    private processing : boolean;
+    /** This queue's request queues. */
+    private queues : Queue[] = (() => {
+        // Automatically generate queues.
+        const queues = [];
+        for (let i = 0; i < QUEUE_LIMIT; i++)
+            queues.push(
+                {
+                    processing: false,
+                    state: WebRequestQueueState.Inactive,
+                    requests: []
+                }
+            );
+        return queues;
+    })();
     /** Rate limiting information */
     private rateLimit : RateLimiter = new RateLimiter(1000, 200);
 
@@ -62,17 +85,54 @@ export default class WebRequestQueue {
     ) {}
 
     /**
-     * Empties out the queue by processing everything.
+     * Throws an error if the given queue ID is out of range.
+     * @param queueIndex The index of the queue.
      */
-    async process() : Promise<void> {
-        if (this.processing) return;
-        if (this.state === WebRequestQueueState.Paused)
+    assertQueue(queueIndex : number) : void {
+        if (queueIndex >= QUEUE_LIMIT || this.queues[queueIndex] == null)
+            throw new RangeError("Queue index out of bounds.");
+    }
+
+    /**
+     * Finds the index of the smallest queue.
+     */
+    smallestQueueIndex() : number {
+        let currentIndex = 0;
+        for (
+            let i = 0;
+            i < Math.max(
+                ...Object.keys(this.queues)
+                    .map(v => isNaN(+(v)) ? Infinity : +(v))
+            );
+            i++
+        ) {
+            if (
+                this.queues[i].requests.length
+                < this.queues[currentIndex].requests.length
+            ) {
+                currentIndex = i;
+            }
+        }
+        return currentIndex;
+    }
+
+    /**
+     * Empties out the queue by processing everything.
+     * @param queueIndex Which queue to process from
+     */
+    async process(queueIndex : number) : Promise<void> {
+        this.assertQueue(queueIndex);
+        // In order to get the pointer instead of the object.
+        const q = () => { return this.queues[queueIndex]; };
+
+        if (q().processing) return;
+        if (q().state === WebRequestQueueState.Paused)
             return WWBackend.log.warn(
                 `An attempt was made to process a paused queue (${this.name}).`
             );
 
-        this.processing = true;
-        this.state = WebRequestQueueState.Active;
+        q().processing = true;
+        q().state = WebRequestQueueState.Active;
 
         // Wrap in async function in order to avoid assumption that state is
         // always Active.
@@ -80,11 +140,11 @@ export default class WebRequestQueue {
             // Using a while loop instead of a for loop will continuously empty out
             // the queue until it becomes empty, even if the queue happens to gain
             // an element.
-            while (this.queue.length > 0) {
-                if (this.state === WebRequestQueueState.Paused)
-                    await PromiseUtils.wait(() => this.state !== WebRequestQueueState.Paused);
+            while (q().requests.length > 0) {
+                if (q().state === WebRequestQueueState.Paused)
+                    await PromiseUtils.wait(() => q().state !== WebRequestQueueState.Paused);
 
-                const { request, promise } = this.queue.shift();
+                const { request, promise } = q().requests.shift();
 
                 try {
                     // This await is VERY important!
@@ -102,8 +162,8 @@ export default class WebRequestQueue {
         })();
 
         // Queue is empty!
-        this.state = WebRequestQueueState.Inactive;
-        this.processing = false;
+        q().state = WebRequestQueueState.Inactive;
+        q().processing = false;
     }
 
     /**
@@ -115,18 +175,21 @@ export default class WebRequestQueue {
     ) : Promise<AxiosResponse> {
         const promiseElements = PromiseUtils.build<AxiosResponse>();
 
-        this.queue.push({
+        const queueIndex = this.smallestQueueIndex();
+
+        this.queues[queueIndex].requests.push({
             request: config,
             promise: promiseElements
         });
 
-        if (this.queue.length > 50) {
+        if (this.queues[queueIndex].requests.length > 50) {
             WWBackend.log.warn("The queue is heavily backlogged. Something must be wrong.");
         }
 
-        if (this.state === WebRequestQueueState.Inactive && !this.processing) {
+        if (this.queues[queueIndex].state === WebRequestQueueState.Inactive
+            && !this.queues[queueIndex].processing) {
             // noinspection ES6MissingAwait
-            this.process();
+            this.process(queueIndex);
         }
 
         return promiseElements.promise;
@@ -134,16 +197,21 @@ export default class WebRequestQueue {
 
     /**
      * Pauses this queue from processing.
+     * @param queueIndex The index of the queue to process.
      */
-    pause() : void {
-        this.state = WebRequestQueueState.Paused;
+    pause(queueIndex : number) : void {
+        this.assertQueue(queueIndex);
+        this.queues[queueIndex].state = WebRequestQueueState.Paused;
     }
 
     /**
      * Unpauses this queue from processing.
+     * @param queueIndex The index of the queue to process.
      */
-    unpause() : void {
-        this.state = this.processing ? WebRequestQueueState.Active : WebRequestQueueState.Inactive;
+    unpause(queueIndex : number) : void {
+        this.assertQueue(queueIndex);
+        this.queues[queueIndex].state = this.queues[queueIndex].processing ?
+            WebRequestQueueState.Active : WebRequestQueueState.Inactive;
     }
 
 }
