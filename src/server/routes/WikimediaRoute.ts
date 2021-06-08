@@ -90,12 +90,13 @@ async function endWikimediaAuthorization(req, res) : Promise<void> {
             // Grab the access token and CentralAuth ID
             token = await AccessToken.fromAuthorizationCode(req.query["code"]);
         } catch (e) {
-            WWBackend.log.error(`Failed to get authorization access token: ${e.message}`, e);
+            WWBackend.log.error(`Failed to get authorization access token: ${e.message}`);
             if (e.isAxiosError) {
                 if (e.response.data["hint"] === "Authorization code has been revoked") {
                     // Code has been revoked. Let's try again.
                     return res.redirect("/wikimedia");
                 }
+                // Only dump the stack if we don't know what happened.
                 WWBackend.log.error(e.response.data);
             }
 

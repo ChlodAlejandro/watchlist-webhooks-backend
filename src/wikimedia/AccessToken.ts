@@ -4,6 +4,7 @@ import axios, {AxiosRequestConfig} from "axios";
 import QueryString from "querystring";
 import WikimediaURL from "./WikimediaURL";
 import mysql from "mysql2/promise";
+import DBSchemaAccount from "../database/schema/Account";
 
 /**
  * The response returned by the MediaWiki OAuth API after a successful
@@ -32,7 +33,7 @@ export default class AccessToken {
     /** The refresh token. Used to regenerate an expired access token. */
     private _refreshToken : string;
     /** The expiry of the token. */
-    private _expiry : Date;
+    private _expiry : number;
     /** The registration time of the token. */
     private _registry : Date;
 
@@ -65,10 +66,23 @@ export default class AccessToken {
     }
 
     /**
+     * Creates an AccessToken object from a database request.
+     */
+    static fromDatabase(row : DBSchemaAccount) : AccessToken {
+        return new AccessToken({
+            "token_type": "Bearer",
+            "expires_in": row.acc_token_expiry,
+            "access_token": row.acc_access,
+            "refresh_token": row.acc_refresh,
+            registry: row.acc_token_registry
+        });
+    }
+
+    /**
      * Creates an access token object from an access token request response.
      * @param response The access token request response.
      */
-    constructor(response : AccessTokenResponse) {
+    constructor(response : AccessTokenResponse & { registry?: Date }) {
         this.setFromResponse(response);
     }
 
@@ -76,12 +90,11 @@ export default class AccessToken {
      * Sets the values of the token from an access token request response.
      * @private
      */
-    private setFromResponse(response : AccessTokenResponse) {
+    private setFromResponse(response : AccessTokenResponse & { registry?: Date }) {
         this._accessToken = response.access_token;
         this._refreshToken = response.refresh_token;
-        this._registry = new Date();
-        this._expiry = new Date();
-        this._expiry.setSeconds(this._expiry.getSeconds() + response.expires_in);
+        this._expiry = response.expires_in;
+        this._registry = response.registry ?? new Date();
     }
 
     /**
@@ -113,17 +126,18 @@ export default class AccessToken {
                 "refresh_token": this._refreshToken
             }),
             responseType: "json"
-        });
+        }).catch(e => { WWBackend.log.error(e.response.data); return e; });
 
         const tokenData : AccessTokenResponse = tokenRequest.data;
         this.setFromResponse(tokenData);
+        await this.save();
     }
 
     /**
      * Saves the token to the database.
      * @param extraCallback Extra callback to perform in case more data needs to be saved.
      */
-    async save(extraCallback : (connection : mysql.Connection) => any) : Promise<void> {
+    async save(extraCallback? : (connection : mysql.Connection) => any) : Promise<void> {
         if (this._centralAuthID == null)
             await this.getCentralAuthId();
 
@@ -145,15 +159,16 @@ export default class AccessToken {
                 this._centralAuthID,
                 this._accessToken,
                 this._refreshToken,
-                TimeUtils.datetime(this._expiry),
+                this._expiry,
                 TimeUtils.datetime(this._registry),
                 this._accessToken,
                 this._refreshToken,
-                TimeUtils.datetime(this._expiry),
+                this._expiry,
                 TimeUtils.datetime(this._registry)
             ]);
 
-            await extraCallback(sql);
+            if (extraCallback)
+                await extraCallback(sql);
         });
     }
 
@@ -163,7 +178,7 @@ export default class AccessToken {
      * @param config The Axios request configuration.
      */
     async upgradeRequest(config? : AxiosRequestConfig) : Promise<AxiosRequestConfig> {
-        if (this._registry.getTime() - this._registry.getTime() > 60000)
+        if (this._registry.getTime() + (this._expiry * 1000) < Date.now() - 60000)
             await this.refresh();
 
         if (config.headers == null)

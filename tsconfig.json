@@ -5,7 +5,6 @@
         "target": "es6",
         "module": "CommonJS",
         "esModuleInterop": true,
-        "traceResolution": true,
         "inlineSources": true,
         "sourceMap": true,
         "resolveJsonModule": true

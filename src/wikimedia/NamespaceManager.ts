@@ -3,6 +3,7 @@
  */
 import WikimediaURL from "./WikimediaURL";
 import axios from "axios";
+import WWBackend from "../WWBackend";
 
 export interface Namespace {
     id: number;
@@ -52,8 +53,49 @@ export default class NamespaceManager {
             namespaceMatrix[namespace.id] = namespace;
         }
 
+        WWBackend.log.trace(
+            `Received namespaces for project: ${project}.`,
+            Object.values(namespacesData).map(n => `${n.id}:${n.name}`).join(", ")
+        );
+
         return (NamespaceManager.namespaceMatrix[project] = namespaceMatrix);
     }
 
+    /**
+     * Gets the subject namespaces of a project.
+     */
+    static async getSubjectNamespaces(project : string) : Promise<Record<number, Namespace>> {
+        const namespaces = await this.getNamespaces(project);
+
+        // Subject namespaces are denoted with even numbers.
+        // https://www.mediawiki.org/wiki/Manual:Namespace
+        return Object.values(namespaces)
+            .filter(v => v.id % 2 == 0 && v.id > -1)
+            .reduce(
+                (prev : Record<number, Namespace>, v : Namespace) => {
+                    prev[v.id] = v;
+                    return prev;
+                },
+                <Record<number, Namespace>>{}
+            );
+    }
+
+    /**
+     * Gets the talk namespaces of a project.
+     */
+    static async getTalkNamespaces(project : string) : Promise<Record<number, Namespace>> {
+        const namespaces = await this.getNamespaces(project);
+
+        // Talk namespaces are denoted with odd numbers.
+        return Object.values(namespaces)
+            .filter(v => v.id % 2 == 1 && v.id > -1)
+            .reduce(
+                (prev : Record<number, Namespace>, v : Namespace) => {
+                    prev[v.id] = v;
+                    return prev;
+                },
+                <Record<number, Namespace>>{}
+            );
+    }
 
 }

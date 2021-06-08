@@ -9,6 +9,8 @@ import WWHTTPServer from "./server/WWHTTPServer";
 
 import packageLock from "../package-lock.json";
 import WikimediaURL from "./wikimedia/WikimediaURL";
+import WatchlistManager from "./wikimedia/WatchlistManager";
+import * as util from "util";
 
 /**
  * HTTP and WSS server for Watchlist Webhooks.
@@ -23,6 +25,8 @@ export default class WWBackend {
     private database : Database;
     /** The server for this WW instance. */
     private webserver : WWHTTPServer;
+    /** The watchlist manager for all watchlists. */
+    private watchlistManager : WatchlistManager;
 
     /** The logger for the WWBackend. */
     public static get log() : Logger {
@@ -32,6 +36,10 @@ export default class WWBackend {
     public static get database() : Database {
         return WWBackend._singleton.database;
     }
+    /** The only instance of the WWBackend. */
+    public static get i() : WWBackend {
+        return WWBackend._singleton ?? (WWBackend._singleton = new WWBackend());
+    }
 
     /**
      * Creates the WatchList Webhooks server.
@@ -39,7 +47,6 @@ export default class WWBackend {
     constructor() {
         if (WWBackend._singleton != null)
             throw new Error("Attempted to start another WatchlistWebhooks instance!");
-        WWBackend._singleton = this;
 
         this.log = Logger.createLogger({
             name: "WWS",
@@ -58,6 +65,11 @@ export default class WWBackend {
     async start() : Promise<void> {
         this.log.info("Starting WatchlistWebhooks server at " + TimeUtils.datetime());
 
+        if (process.env.NODE_ENV === "development") {
+            // Expose WWBackend in debugger console.
+            (global as any).WWBackend = this;
+        }
+
         this.log.info("Checking environment variables...");
         {
             const environment = EnvironmentUtils.checkEnvironment();
@@ -69,6 +81,31 @@ export default class WWBackend {
         }
 
         this.log.info("Configuring libraries...");
+
+        if (process.env.NODE_ENV === "development") {
+            axios.interceptors.request.use((config) => {
+                WWBackend.log.trace(
+                    `${config.method.toUpperCase()} ${config.url}`,
+                    ...[
+                        ...(config.method.toLowerCase() === "get" ?
+                            [config.data, config.params] : [config.params]),
+                    ]
+                );
+
+                return config;
+            });
+
+            axios.interceptors.response.use((response) => {
+                const config = response.request;
+                WWBackend.log.trace(
+                    `RESPONSE ${config.method.toUpperCase()} ${config.url}`,
+                    util.inspect(response.data, { colors: true, maxArrayLength: 10 })
+                );
+
+                return response;
+            });
+        }
+
         axios.interceptors.request.use((config) => {
             config.headers["User-Agent"] = `WatchlistWebhooks/${
                 packageLock.version
@@ -85,6 +122,8 @@ export default class WWBackend {
 
             return config;
         });
+
+        this.log.info("Building Wikimedia caches...");
         await WikimediaURL.buildCache();
 
         try {
@@ -93,6 +132,9 @@ export default class WWBackend {
             this.log.info("Starting web server...");
             this.webserver = new WWHTTPServer();
             await this.webserver.start();
+
+            this.log.info("Starting the watchlist manager...");
+            this.watchlistManager = new WatchlistManager();
         } catch (e) {
             this.log.fatal("Failed to properly start WW server.", e);
         }
@@ -105,12 +147,28 @@ export default class WWBackend {
         this.log.info("Shutting down WatchlistWebhooks server at " + TimeUtils.datetime());
 
         if (this.database != null) {
-            this.database.close();
+            this.database.closeAll();
+            this.log.info("Active database connections closed.");
         }
+
+        this.log.info("============================================================");
+        this.log.info("                   BACKEND SERVER STOPPED                   ");
+        this.log.info("============================================================");
+        process.exit();
     }
 
 }
 
 (async () => {
-    await (new WWBackend()).start();
+    await WWBackend.i.start();
 })();
+
+process.once("SIGINT", function () {
+    WWBackend.log.info("SIGINT received. Shutting down...");
+    WWBackend.i.stop();
+});
+
+process.once("SIGTERM", function () {
+    WWBackend.log.info("SIGTERM received. Shutting down...");
+    WWBackend.i.stop();
+});
