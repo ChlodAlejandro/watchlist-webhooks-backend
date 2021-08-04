@@ -1,11 +1,10 @@
 import express from "express";
-import Route from "./Route";
-import ResponseUtils from "../../util/ResponseUtils";
-import StringUtils from "../../util/StringUtils";
-import WWBackend from "../../WWBackend";
-import URLUtils from "../../util/URLUtils";
-import WikimediaURL from "../../wikimedia/WikimediaURL";
-import AccessToken from "../../wikimedia/AccessToken";
+import ResponseUtils from "../../../../util/ResponseUtils";
+import StringUtils from "../../../../util/StringUtils";
+import WWBackend from "../../../../WWBackend";
+import URLUtils from "../../../../util/URLUtils";
+import WikimediaURL from "../../../../wikimedia/WikimediaURL";
+import AccessToken from "../../../../wikimedia/AccessToken";
 
 /**
  * Begins authorization with Wikimedia. This sets the proper anti-CSRF cookie
@@ -68,7 +67,8 @@ async function endWikimediaAuthorization(req, res) : Promise<void> {
         return res.redirect(target.toString());
     }
     if (req.cookies["wmww-auth-id"] == null) {
-        return res.redirect("/wikimedia");
+        // No authentication ID. Regenerate one by redoing the entire process.
+        return res.redirect(req.url);
     }
     if (
         req.cookies["wmww-auth-id"].length !== 64
@@ -137,15 +137,15 @@ async function endWikimediaAuthorization(req, res) : Promise<void> {
     }
 }
 
-export default <Route>{
-    path: /^\/wikimedia\/?$/,
-    middleware: (req, res) => {
-        if (req.query["state"] == null) {
-            startWikimediaAuthorization(req, res);
-        } else if (`${req.query["state"]}`.startsWith("start-")) {
-            endWikimediaAuthorization(req, res);
-        } else {
-            ResponseUtils.resJsonError(res, 400, "Invalid authorizations state.");
-        }
+/**
+ * Authenticates a user on a Wikimedia wiki.
+ */
+export default function(req : express.Request, res : express.Response) : void {
+    if (req.query["state"] == null) {
+        startWikimediaAuthorization(req, res);
+    } else if (`${req.query["state"]}`.startsWith("start-")) {
+        endWikimediaAuthorization(req, res);
+    } else {
+        ResponseUtils.resJsonError(res, 400, "Invalid authorizations state.");
     }
-};
+}

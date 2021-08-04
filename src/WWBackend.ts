@@ -11,11 +11,21 @@ import packageLock from "../package-lock.json";
 import WikimediaURL from "./wikimedia/WikimediaURL";
 import WatchlistManager from "./wikimedia/WatchlistManager";
 import * as util from "util";
+import path from "path";
 
 /**
  * HTTP and WSS server for Watchlist Webhooks.
  */
 export default class WWBackend {
+
+    /**
+     * The root directory. The "src" folder should be here.
+     */
+    public static readonly ROOT_DIRECTORY = path.resolve(__dirname, "..");
+    /**
+     * The source directory. The "common" and "frontend" folders should be here.
+     */
+    public static readonly SOURCE_DIRECTORY = path.resolve(__dirname);
 
     /** This singleton handles the only instance of the WW backend server. */
     private static _singleton : WWBackend;

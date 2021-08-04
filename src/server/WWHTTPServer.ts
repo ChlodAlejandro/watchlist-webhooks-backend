@@ -1,10 +1,10 @@
 import express from "express";
 import cookieParser from "cookie-parser";
 import * as http from "http";
-import {findRoute} from "./routes/Route";
-import WWBackend from "../WWBackend";
-import ResponseUtils from "../util/ResponseUtils";
 import path from "path";
+import WWBackend from "../WWBackend";
+import getAPIRouter from "./api/APIRegistry";
+
 /**
  * The HTTP server for Watchlist Webhooks.
  *
@@ -32,25 +32,11 @@ export default class WWHTTPServer {
         this.express.use(cookieParser());
 
         this.router = express.Router({ caseSensitive: true });
+        this.router.use("/", express.static(
+            path.resolve(WWBackend.SOURCE_DIRECTORY, "frontend", "static")
+        ));
 
-        this.router.use("/cookies", express.static(path.resolve(__dirname, "static", "cookies")));
-        this.router.use("/error", express.static(path.resolve(__dirname, "static", "error")));
-        this.router.use("/", express.static(path.resolve(__dirname, "static", "main")));
-
-        this.router.all("*", async (req, res, next) => {
-            WWBackend.log.trace("Incoming connection.");
-            const route = findRoute(req);
-
-            if (route == null)
-                ResponseUtils.resJsonError(res, 404, `The path requested (${
-                    req.path
-                }) cannot be found.`);
-            else {
-                WWBackend.log.debug(`Found path: ${route.path}`);
-                await route.middleware(req, res, next);
-            }
-        });
-
+        this.express.use(await getAPIRouter());
         this.express.use(this.router);
     }
 

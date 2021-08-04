@@ -88,30 +88,31 @@ export default class WatchlistManager {
 
     /**
      * Loads a user's entire watchlist from the SQL database.
-     * @param sql The connection to use, or nothing if a connection should be opened.
+     *
      * @param watchlist The watchlist to get information from.
      */
     async loadWatchlist(
-        sql : mysql.Connection,
         watchlist : DBSchemaWatchlist
     ) : Promise<Set<WatchlistEntry>> {
-        // Load from SQL
-        const watchlistQuery = await sql.query<mysql.RowDataPacket[]>(`
-            SELECT *
-            FROM \`pages_userwatchlists\`
-                JOIN \`pages\` ON \`pwl_page\` = \`pge_id\`
-            WHERE \`pwl_watchlist\` = ?
-        `, [ watchlist.wtl_id ]);
+        return WWBackend.database.useConnection(async (sql) => {
+            // Load from SQL
+            const watchlistQuery = await sql.query<mysql.RowDataPacket[]>(`
+                SELECT *
+                FROM \`pages_userwatchlists\`
+                    JOIN \`pages\` ON \`pwl_page\` = \`pge_id\`
+                WHERE \`pwl_watchlist\` = ?
+            `, [ watchlist.wtl_id ]);
 
-        const pages = new Set<WatchlistEntry>();
-        for (const page of <(DBSchemaWatchlistPage & DBSchemaPage)[]>watchlistQuery[0]) {
-            pages.add({
-                ns: page.pge_namespace,
-                title: page.pge_page.toString("utf8")
-            });
-        }
+            const pages = new Set<WatchlistEntry>();
+            for (const page of <(DBSchemaWatchlistPage & DBSchemaPage)[]> watchlistQuery[0]) {
+                pages.add({
+                    ns: page.pge_namespace,
+                    title: page.pge_page.toString("utf8")
+                });
+            }
 
-        return pages;
+            return pages;
+        });
     }
 
     /**
@@ -122,10 +123,7 @@ export default class WatchlistManager {
         manual = false
     ) : Promise<void> {
         // Download the old watchlist
-        let oldEntries;
-        await WWBackend.database.useConnection(async (sql) => {
-            oldEntries = <Set<WatchlistEntry>> await this.loadWatchlist(sql, watchlist);
-        });
+        const oldEntries = await this.loadWatchlist(watchlist);
 
         // Download the new watchlist
         const newEntries = await this.pullWatchlist(
@@ -151,6 +149,7 @@ export default class WatchlistManager {
             WWBackend.log.debug("Saving to database...");
 
             // DELETE removed pages.
+            // Do NOT remove pages from the `pages` table.
             if (removed.length > 0) {
                 // Do this in chunks of 1000.
                 do {

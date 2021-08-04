@@ -19,7 +19,7 @@ interface DatabaseConnection {
 export default class Database {
 
     /**
-     * The maximum time that a connection will be held open for further requests.
+     * The maximum time in milliseconds that a connection will be held open for further requests.
      * @private
      */
     private static readonly connectionIdle = 2000;
@@ -156,12 +156,13 @@ export default class Database {
      * Connect to the database and perform queries.
      * @param callback A function which uses the borrowed connection.
      */
-    async useConnection(
-        callback : (connection : mysql.Connection) => Promise<any> | any
-    ) : Promise<void> {
+    async useConnection<T>(
+        callback : (connection : mysql.Connection) => Promise<T>
+    ) : Promise<T> {
         const connection = await this.use();
-        await callback(connection.sql);
+        const callbackResult = await callback(connection.sql);
         await this.release(connection.index);
+        return callbackResult;
     }
 
 }
